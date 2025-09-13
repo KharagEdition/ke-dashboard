@@ -39,6 +39,7 @@ const UserManagementDashboard = () => {
   });
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
+  const [appName, setAppName] = useState("User Management");
   const [filterProvider, setFilterProvider] = useState("all");
   const [filterSubscription, setFilterSubscription] = useState("all");
   const [loading, setLoading] = useState(false);
@@ -59,7 +60,9 @@ const UserManagementDashboard = () => {
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
-          //const firebaseConfig = JSON.parse(e.target?.result as string);
+          const firebaseJsonConfig = JSON.parse(e.target?.result as string);
+          const projectId: string | undefined = firebaseJsonConfig?.project_id;
+
           const rawJson = e.target?.result as string;
           const encoded = btoa(rawJson);
           await fetch("/api/firebase", {
@@ -67,6 +70,11 @@ const UserManagementDashboard = () => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ firebaseConfig: encoded }),
           });
+          const appName = (projectId || "User Management")
+            .split("-")
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(" ");
+          setAppName(appName);
           setConfigLoaded(true);
           setShowConfigModal(false);
           console.log("Firebase config loaded:", encoded);
@@ -264,7 +272,7 @@ const UserManagementDashboard = () => {
 
   // Send email to selected users
   const sendEmail = async () => {
-    if (selectedUsers.size === 0) {
+    if (selectedUsers.size === 0 || !configLoaded) {
       alert("Please select at least one user to send email.");
       return;
     }
@@ -350,9 +358,7 @@ const UserManagementDashboard = () => {
           <div className="flex justify-between items-center py-6">
             <div className="flex items-center">
               <Users className="h-8 w-8 text-indigo-600 mr-3" />
-              <h1 className="text-3xl font-bold text-gray-900">
-                User Management
-              </h1>
+              <h1 className="text-3xl font-bold text-gray-900">{appName}</h1>
             </div>
             <div className="flex items-center space-x-4">
               <button
@@ -740,6 +746,7 @@ const UserManagementDashboard = () => {
               <button
                 onClick={() => {
                   setShowConfigModal(false);
+                  if (!configLoaded) return;
                   fetchUsers(
                     1,
                     pagination.usersPerPage,
