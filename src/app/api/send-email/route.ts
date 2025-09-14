@@ -7,7 +7,7 @@ import * as brevo from "@getbrevo/brevo";
 
 // Initialize Brevo API
 const apiInstance = new brevo.TransactionalEmailsApi();
-const emailLimit = 87;
+const emailLimit = 300;
 apiInstance.setApiKey(
   brevo.TransactionalEmailsApiApiKeys.apiKey,
   process.env.BREVO_API_KEY!

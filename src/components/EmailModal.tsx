@@ -240,7 +240,7 @@ export default function EmailModal({ onClose, onSend }: EmailModalProps) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ subject, htmlContent }),
+        body: JSON.stringify({ subject, htmlContent, sendToAll: true }),
       });
 
       const data = await response.json();
