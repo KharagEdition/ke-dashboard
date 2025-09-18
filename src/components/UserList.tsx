@@ -68,10 +68,10 @@ export default function UserList({ users }: UserListProps) {
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span
                     className={getSubscriptionBadge(
-                      user.subscription || "trial"
+                      user.subscriptionType || "free"
                     )}
                   >
-                    {user.subscription || "trial"}
+                    {user.subscriptionType || "free"}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

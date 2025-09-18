@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
           email,
           displayName: email.split("@")[0],
           provider: "unknown",
-          subscription: "unknown",
+          subscriptionType: "unknown",
           createdAt: new Date().toISOString(),
           lastLogin: new Date().toISOString(),
         });

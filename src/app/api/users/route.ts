@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       baseQuery = baseQuery.where("provider", "==", provider);
     }
     if (subscription !== "all") {
-      baseQuery = baseQuery.where("subscription", "==", subscription);
+      baseQuery = baseQuery.where("subscriptionType", "==", subscription);
     }
 
     // Get ALL filtered results for search (not paginated yet)
@@ -43,7 +43,6 @@ export async function GET(request: NextRequest) {
         displayName: data.displayName || "",
         email: data.email || "",
         provider: data.provider || "",
-        subscription: data.subscription || "trial",
         createdAt: data.createdAt
           ? typeof data.createdAt === "number"
             ? new Date(data.createdAt).toISOString()
@@ -55,6 +54,7 @@ export async function GET(request: NextRequest) {
             : data.lastLogin.toDate?.()?.toISOString() || data.lastLogin
           : "",
         photoUrl: data.photoUrl || "",
+        subscriptionType: data.subscriptionType || "free",
       });
     });
 
@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
       const data = doc.data();
       totalCount++;
 
-      if (data.subscription === "premium") {
+      if (data.subscriptionType === "premium") {
         subscribedCount++;
       }
 

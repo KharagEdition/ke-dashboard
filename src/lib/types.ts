@@ -4,10 +4,10 @@ export interface User {
   displayName: string;
   email: string;
   provider: string;
-  subscription: string;
   createdAt: string;
   lastLogin: string;
   photoUrl?: string;
+  subscriptionType?: string;
 }
 
 export interface UserStats {
@@ -86,18 +86,6 @@ export interface DailyEmailStatsDoc {
   date: string;
   emailsSent: number;
   lastUpdated: any; // Firestore Timestamp
-}
-
-// Types
-export interface User {
-  id: string;
-  displayName: string;
-  email: string;
-  provider: string;
-  subscription: string;
-  createdAt: string;
-  lastLogin: string;
-  photoUrl?: string;
 }
 
 export interface FirebaseConfig {
