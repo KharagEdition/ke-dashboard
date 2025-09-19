@@ -21,9 +21,9 @@ export async function GET() {
         (user: User) =>
           `${user.id},"${user.displayName || "N/A"}","${
             user.email || "N/A"
-          }","${user.provider || "N/A"}","${user.subscription || "trial"}","${
-            user.createdAt || "N/A"
-          }","${user.lastLogin || "N/A"}"`
+          }","${user.provider || "N/A"}","${
+            user.subscriptionType || "trial"
+          }","${user.createdAt || "N/A"}","${user.lastLogin || "N/A"}"`
       )
       .join("\n");
 
