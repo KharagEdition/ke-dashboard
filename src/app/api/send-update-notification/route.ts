@@ -8,6 +8,7 @@ interface UpdateNotificationRequest {
   body: string;
   data?: Record<string, string>;
   topic?: string;
+  tokens?: string[];
 }
 
 export async function POST(request: NextRequest) {
@@ -16,7 +17,8 @@ export async function POST(request: NextRequest) {
       title,
       body,
       data,
-      topic = "all_users",
+      topic = "all-users",
+      tokens,
     }: UpdateNotificationRequest = await request.json();
 
     // Validate required fields
@@ -42,21 +44,38 @@ export async function POST(request: NextRequest) {
     const messaging = admin.messaging();
 
     // Prepare notification payload matching Android app expectations
-    const message = {
-      notification: {
-        title,
-        body,
-      },
+    const message: admin.messaging.Message = {
+      // NO notification payload - this ensures onMessageReceived is always called
+      //   notification: {
+      //     title: title,
+      //     body: body,
+      //   },
       data: {
-        title,
+        title: title,
         message: body, // Android expects 'message' not 'body'
         type: data?.type || "app_update",
         version: data?.version || "",
         url: data?.url || "",
         timestamp: new Date().toISOString(),
-        ...data, // Include any additional data fields
+        // Include any additional data fields
+        ...(data || {}),
       },
-      topic: topic, // Send to all devices subscribed to this topic
+      // Set Android-specific options for better delivery
+      android: {
+        priority: "high",
+        // This ensures the message wakes up the app
+        data: {
+          title: title,
+          message: body,
+          type: data?.type || "app_update",
+          version: data?.version || "",
+          url: data?.url || "",
+          timestamp: new Date().toISOString(),
+          ...(data || {}),
+        },
+      },
+      // Add topic or tokens
+      topic: topic,
     };
 
     console.log("Sending message:", JSON.stringify(message, null, 2));
