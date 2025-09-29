@@ -15,10 +15,12 @@ import {
   CheckSquare,
   Square,
   Send,
+  Bell,
 } from "lucide-react";
 import { Pagination, User, UserStats } from "@/lib/types";
 import EmailModal from "./EmailModal";
 import Image from "next/image";
+import NotificationModal from "./NotificationModal";
 
 const UserManagementDashboard = () => {
   // State management
@@ -46,6 +48,8 @@ const UserManagementDashboard = () => {
   const [configLoaded, setConfigLoaded] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showBulkEmailModal, setShowBulkEmailModal] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
+
   const [showConfigModal, setShowConfigModal] = useState(!configLoaded);
   const [emailSubject, setEmailSubject] = useState("");
   const [emailContent, setEmailContent] = useState("");
@@ -361,6 +365,13 @@ const UserManagementDashboard = () => {
               <h1 className="text-3xl font-bold text-gray-900">{appName}</h1>
             </div>
             <div className="flex items-center space-x-4">
+              <button
+                onClick={() => setShowNotificationModal(true)}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Bell className="h-4 w-4 mr-2" />
+                Send Notification
+              </button>
               <button
                 onClick={() => setShowBulkEmailModal(true)}
                 className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
@@ -823,6 +834,15 @@ const UserManagementDashboard = () => {
           onClose={() => setShowBulkEmailModal(false)}
           onSend={() => {
             setShowBulkEmailModal(false);
+            // Optionally show success message
+          }}
+        />
+      )}
+      {showNotificationModal && (
+        <NotificationModal
+          onClose={() => setShowNotificationModal(false)}
+          onSend={() => {
+            setShowNotificationModal(false);
             // Optionally show success message
           }}
         />
