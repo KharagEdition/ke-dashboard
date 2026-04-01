@@ -9,13 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@getbrevo/brevo": "^3.0.1",
+    "@getbrevo/brevo": "^5.0.3",
     "@sendgrid/mail": "^8.1.5",
     "@types/nodemailer": "^7.0.1",
-    "firebase-admin": "^13.5.0",
+    "firebase-admin": "^10.3.0",
     "lucide-react": "^0.542.0",
-    "next": "15.5.2",
-    "nodemailer": "^6.10.1",
+    "next": "^15.5.14",
+    "nodemailer": "^8.0.4",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },

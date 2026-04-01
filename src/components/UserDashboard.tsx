@@ -53,6 +53,8 @@ const UserManagementDashboard = () => {
   const [showConfigModal, setShowConfigModal] = useState(!configLoaded);
   const [emailSubject, setEmailSubject] = useState("");
   const [emailContent, setEmailContent] = useState("");
+  const [fromName, setFromName] = useState("Tibetan Keyboard");
+  const [customFromName, setCustomFromName] = useState("");
   // Debounced search
   const [searchDebounceTimer, setSearchDebounceTimer] =
     useState<NodeJS.Timeout | null>(null);
@@ -88,11 +90,11 @@ const UserManagementDashboard = () => {
             pagination.usersPerPage,
             searchTerm,
             filterProvider,
-            filterSubscription
+            filterSubscription,
           );
         } catch (error) {
           alert(
-            "Invalid JSON file. Please check your Firebase service account key."
+            "Invalid JSON file. Please check your Firebase service account key.",
           );
         }
       };
@@ -109,7 +111,7 @@ const UserManagementDashboard = () => {
       limit: number = 10,
       search: string = "",
       provider: string = "all",
-      subscription: string = "all"
+      subscription: string = "all",
     ) => {
       setLoading(true);
       try {
@@ -137,7 +139,7 @@ const UserManagementDashboard = () => {
               subscribedUsers: 0,
               activeToday: 0,
               newThisWeek: 0,
-            }
+            },
           );
           setPagination(
             data.pagination || {
@@ -147,7 +149,7 @@ const UserManagementDashboard = () => {
               usersPerPage: limit,
               hasNextPage: false,
               hasPrevPage: false,
-            }
+            },
           );
 
           // Clear selections when fetching new data
@@ -186,7 +188,7 @@ const UserManagementDashboard = () => {
         setLoading(false);
       }
     },
-    []
+    [],
   );
 
   // Load demo data when component mounts
@@ -209,7 +211,7 @@ const UserManagementDashboard = () => {
         pagination.usersPerPage,
         searchTerm,
         filterProvider,
-        filterSubscription
+        filterSubscription,
       );
     }, 300);
 
@@ -228,7 +230,7 @@ const UserManagementDashboard = () => {
         pagination.usersPerPage,
         searchTerm,
         filterProvider,
-        filterSubscription
+        filterSubscription,
       );
     }
   };
@@ -297,6 +299,7 @@ const UserManagementDashboard = () => {
           subject: emailSubject,
           content: emailContent,
           sendToAll: false,
+          fromName: fromName === "Custom" ? customFromName : fromName,
         }),
       });
 
@@ -626,7 +629,7 @@ const UserManagementDashboard = () => {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span
                             className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${getSubscriptionBadge(
-                              user.subscriptionType || "free"
+                              user.subscriptionType || "free",
                             )}`}
                           >
                             {user.subscriptionType || "free"}
@@ -675,7 +678,7 @@ const UserManagementDashboard = () => {
                       <span className="font-medium">
                         {Math.min(
                           pagination.currentPage * pagination.usersPerPage,
-                          pagination.totalUsers
+                          pagination.totalUsers,
                         )}
                       </span>{" "}
                       of{" "}
@@ -763,7 +766,7 @@ const UserManagementDashboard = () => {
                     pagination.usersPerPage,
                     searchTerm,
                     filterProvider,
-                    filterSubscription
+                    filterSubscription,
                   );
                 }}
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
@@ -783,6 +786,35 @@ const UserManagementDashboard = () => {
               Send Email to {selectedUsers.size} Selected Users
             </h3>
             <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  From Name
+                </label>
+                <select
+                  value={fromName}
+                  onChange={(e) => setFromName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                  <option value="Tibetan Keyboard">Tibetan Keyboard</option>
+                  <option value="Tibetan Calendar">Tibetan Calendar</option>
+                  <option value="Tibetan Language Learning App">
+                    Tibetan Language Learning App
+                  </option>
+                  <option value="Tibetan Prayer">Tibetan Prayer</option>
+                  <option value="Tibetan Dictionary">Tibetan Dictionary</option>
+                  <option value="YiglyChecker">YiglyChecker</option>
+                  <option value="Custom">Custom...</option>
+                </select>
+                {fromName === "Custom" && (
+                  <input
+                    type="text"
+                    value={customFromName}
+                    onChange={(e) => setCustomFromName(e.target.value)}
+                    className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Enter custom app name"
+                  />
+                )}
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Subject

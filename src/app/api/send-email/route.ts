@@ -3,15 +3,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "../../../lib/firebase-admin";
 import { User } from "../../../lib/types";
-import * as brevo from "@getbrevo/brevo";
+import { BrevoClient } from "@getbrevo/brevo";
 
 // Initialize Brevo API
-const apiInstance = new brevo.TransactionalEmailsApi();
+const brevoClient = new BrevoClient({ apiKey: process.env.BREVO_API_KEY! });
 const emailLimit = 300;
-apiInstance.setApiKey(
-  brevo.TransactionalEmailsApiApiKeys.apiKey,
-  process.env.BREVO_API_KEY!
-);
 
 interface EmailTrackingRecord {
   userId: string;
@@ -43,7 +39,11 @@ export async function POST(request: NextRequest) {
       maxEmailsPerDay = emailLimit,
       skipDuplicates = true,
       sendToAll = false, // Flag to determine if sending to all users or just selected ones
+      fromName,
     } = body;
+
+    const senderName = fromName || process.env.FROM_NAME || "KharagEdition";
+    const appName = fromName || process.env.APP_NAME || "";
 
     if (!subject || (!content && !htmlContent)) {
       return NextResponse.json(
@@ -198,31 +198,27 @@ export async function POST(request: NextRequest) {
       </div>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
       <p style="font-size: 12px; color: #6b7280;">
-        This email was sent from ${process.env.APP_NAME || "Your App"}
+        This email was sent from ${appName}
       </p>
     </div>`;
 
     // Send individual emails
     const emailPromises = finalUsersList.map(async (user) => {
-      const sendSmtpEmail = new brevo.SendSmtpEmail();
-
-      sendSmtpEmail.sender = {
-        email: process.env.FROM_EMAIL!,
-        name: process.env.FROM_NAME || "KharagEdition",
-      };
-
-      sendSmtpEmail.to = [{ email: user.email }];
-      sendSmtpEmail.subject = subject;
-      sendSmtpEmail.htmlContent = emailContent;
-      sendSmtpEmail.tags = [sendToAll ? "bulk-email" : "selected-users"];
-
-      sendSmtpEmail.params = {
-        displayName: user.displayName || user.email.split("@")[0],
-        appName: process.env.APP_NAME || "",
-      };
-
       try {
-        const response = await apiInstance.sendTransacEmail(sendSmtpEmail);
+        const response = await brevoClient.transactionalEmails.sendTransacEmail({
+          sender: {
+            email: process.env.FROM_EMAIL!,
+            name: senderName,
+          },
+          to: [{ email: user.email }],
+          subject: subject,
+          htmlContent: emailContent,
+          tags: [sendToAll ? "bulk-email" : "selected-users"],
+          params: {
+            displayName: user.displayName || user.email.split("@")[0],
+            appName: appName,
+          },
+        });
 
         // Track successful email in Firestore
         const trackingRecord: EmailTrackingRecord = {
@@ -230,7 +226,7 @@ export async function POST(request: NextRequest) {
           email: user.email,
           subject: subject,
           sentAt: new Date(),
-          messageId: response.body.messageId,
+          messageId: response.messageId,
           ...(campaignId && { campaignId }),
         };
 
@@ -238,7 +234,7 @@ export async function POST(request: NextRequest) {
 
         return {
           email: user.email,
-          messageId: response.body.messageId,
+          messageId: response.messageId,
           success: true,
         };
       } catch (emailError: any) {

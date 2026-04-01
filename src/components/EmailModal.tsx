@@ -12,6 +12,19 @@ export default function EmailModal({ onClose, onSend }: EmailModalProps) {
   const [htmlContent, setHtmlContent] = useState("");
   const [sending, setSending] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [fromName, setFromName] = useState("Tibetan Keyboard");
+  const [customFromName, setCustomFromName] = useState("");
+
+  const fromNameOptions = [
+    "Tibetan Keyboard",
+    "Tibetan Calendar",
+    "Tibetan Language Learning App",
+    "Tibetan Prayer",
+    "Tibetan Dictionary",
+    "YiglyChecker",
+  ];
+
+  const resolvedFromName = fromName === "Custom" ? customFromName : fromName;
 
   // Default HTML template
   const calendarReleaseTemplate = `<!DOCTYPE html>
@@ -240,7 +253,12 @@ export default function EmailModal({ onClose, onSend }: EmailModalProps) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ subject, htmlContent, sendToAll: true }),
+        body: JSON.stringify({
+          subject,
+          htmlContent,
+          sendToAll: true,
+          fromName: resolvedFromName,
+        }),
       });
 
       const data = await response.json();
@@ -265,6 +283,34 @@ export default function EmailModal({ onClose, onSend }: EmailModalProps) {
         {/* Left Panel - Email Editor */}
         <div className="w-1/2 p-6 border-r border-gray-200">
           <h2 className="text-xl font-bold mb-4">Send Email Campaign</h2>
+
+          {/* App Name */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              App Name
+            </label>
+            <select
+              value={fromName}
+              onChange={(e) => setFromName(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {fromNameOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+              <option value="Custom">Custom...</option>
+            </select>
+            {fromName === "Custom" && (
+              <input
+                type="text"
+                value={customFromName}
+                onChange={(e) => setCustomFromName(e.target.value)}
+                className="mt-2 w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter custom from name"
+              />
+            )}
+          </div>
 
           {/* Subject */}
           <div className="mb-4">
