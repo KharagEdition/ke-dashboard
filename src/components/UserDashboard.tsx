@@ -1,7 +1,8 @@
+"use client";
+
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Search,
-  Filter,
   Mail,
   Download,
   Users,
@@ -9,21 +10,56 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  Upload,
   Eye,
-  EyeOff,
   CheckSquare,
   Square,
-  Send,
   Bell,
+  Megaphone,
+  X,
+  AlertCircle,
+  Loader2,
+  Send,
 } from "lucide-react";
-import { Pagination, User, UserStats } from "@/lib/types";
-import EmailModal from "./EmailModal";
 import Image from "next/image";
+import type { Pagination, User, UserStats } from "@/lib/types";
+import PaginationBar from "./Pagination";
+import EmailModal from "./EmailModal";
 import NotificationModal from "./NotificationModal";
+import CampaignList from "./CampaignList";
 
-const UserManagementDashboard = () => {
-  // State management
+type ActiveTab = "users" | "campaigns";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+function formatDate(dateString: string): string {
+  if (!dateString) return "Never";
+  const d = new Date(dateString);
+  return isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+}
+
+function subscriptionBadge(type: string | undefined): string {
+  return type === "premium"
+    ? "bg-gradient-to-r from-purple-500 to-pink-500 text-white"
+    : "bg-gray-100 text-gray-600";
+}
+
+// ─── Component ────────────────────────────────────────────────────────────
+
+export default function UserDashboard() {
+  // ── Shared state ──────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<ActiveTab>("users");
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [appName, setAppName] = useState("Dashboard");
+  const [showConfigModal, setShowConfigModal] = useState(true);
+  const [configError, setConfigError] = useState<string | null>(null);
+
+  // ── Users tab state ───────────────────────────────────────────────────
   const [users, setUsers] = useState<User[]>([]);
   const [userStats, setUserStats] = useState<UserStats>({
     totalUsers: 0,
@@ -35,852 +71,771 @@ const UserManagementDashboard = () => {
     currentPage: 1,
     totalPages: 1,
     totalUsers: 0,
-    usersPerPage: 10,
+    usersPerPage: 20,
     hasNextPage: false,
     hasPrevPage: false,
   });
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
-  const [appName, setAppName] = useState("User Management");
   const [filterProvider, setFilterProvider] = useState("all");
   const [filterSubscription, setFilterSubscription] = useState("all");
-  const [loading, setLoading] = useState(false);
-  const [configLoaded, setConfigLoaded] = useState(false);
-  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+
+  // ── Modal state ───────────────────────────────────────────────────────
   const [showBulkEmailModal, setShowBulkEmailModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
+  const [showSelectedEmailModal, setShowSelectedEmailModal] = useState(false);
 
-  const [showConfigModal, setShowConfigModal] = useState(!configLoaded);
+  // ── Selected-users email form ──────────────────────────────────────────
   const [emailSubject, setEmailSubject] = useState("");
   const [emailContent, setEmailContent] = useState("");
-  const [fromName, setFromName] = useState("Tibetan Keyboard");
-  const [customFromName, setCustomFromName] = useState("");
-  // Debounced search
-  const [searchDebounceTimer, setSearchDebounceTimer] =
-    useState<NodeJS.Timeout | null>(null);
+  const [emailFromName, setEmailFromName] = useState("Tibetan Keyboard");
+  const [emailCustomFrom, setEmailCustomFrom] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
 
-  // Load Firebase config from JSON file
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file && file.type === "application/json") {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const firebaseJsonConfig = JSON.parse(e.target?.result as string);
-          const projectId: string | undefined = firebaseJsonConfig?.project_id;
+  // ── Firebase config upload ────────────────────────────────────────────
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-          const rawJson = e.target?.result as string;
-          const encoded = btoa(rawJson);
-          await fetch("/api/firebase", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ firebaseConfig: encoded }),
-          });
-          const appName = (projectId || "User Management")
-            .split("-")
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(" ");
-          setAppName(appName);
-          setConfigLoaded(true);
-          setShowConfigModal(false);
-          console.log("Firebase config loaded:", encoded);
-          // Automatically fetch users after config is loaded
-          fetchUsers(
-            1,
-            pagination.usersPerPage,
-            searchTerm,
-            filterProvider,
-            filterSubscription,
-          );
-        } catch (error) {
-          alert(
-            "Invalid JSON file. Please check your Firebase service account key.",
-          );
-        }
-      };
-      reader.readAsText(file);
-    } else {
-      alert("Please select a valid JSON file.");
+    if (file.type !== "application/json") {
+      setConfigError("Please select a valid JSON file.");
+      return;
     }
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const raw = ev.target?.result as string;
+        const parsed = JSON.parse(raw) as { project_id?: string };
+        const encoded = btoa(raw);
+
+        const res = await fetch("/api/firebase", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ firebaseConfig: encoded }),
+        });
+
+        if (!res.ok) throw new Error("Failed to initialise Firebase");
+
+        const name = (parsed.project_id ?? "Dashboard")
+          .split("-")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+
+        setAppName(name);
+        setConfigLoaded(true);
+        setShowConfigModal(false);
+        setConfigError(null);
+        fetchUsers(1, pagination.usersPerPage, "", "all", "all");
+      } catch (err) {
+        setConfigError(
+          err instanceof Error
+            ? err.message
+            : "Invalid or unsupported JSON file"
+        );
+      }
+    };
+    reader.readAsText(file);
+    // Reset input so same file can be re-selected
+    e.target.value = "";
   };
 
-  // Fetch users from Firebase with proper pagination
+  // ── Fetch users ───────────────────────────────────────────────────────
   const fetchUsers = useCallback(
     async (
-      page: number = 1,
-      limit: number = 10,
-      search: string = "",
-      provider: string = "all",
-      subscription: string = "all",
+      page: number,
+      limit: number,
+      search: string,
+      provider: string,
+      subscription: string
     ) => {
-      setLoading(true);
+      setUsersLoading(true);
       try {
         const params = new URLSearchParams({
-          page: page.toString(),
-          limit: limit.toString(),
+          page: String(page),
+          limit: String(limit),
           ...(search && { search }),
           ...(provider !== "all" && { provider }),
           ...(subscription !== "all" && { subscription }),
         });
 
-        const response = await fetch(`/api/users?${params}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        });
+        const res = await fetch(`/api/users?${params}`);
+        if (!res.ok) throw new Error("Failed to fetch users");
+        const data = (await res.json()) as {
+          users: User[];
+          stats: UserStats;
+          pagination: Pagination;
+        };
 
-        if (response.ok) {
-          const data = await response.json();
-          setUsers(data.users || []);
-          setUserStats(
-            data.stats || {
-              totalUsers: 0,
-              subscribedUsers: 0,
-              activeToday: 0,
-              newThisWeek: 0,
-            },
-          );
-          setPagination(
-            data.pagination || {
-              currentPage: page,
-              totalPages: 1,
-              totalUsers: 0,
-              usersPerPage: limit,
-              hasNextPage: false,
-              hasPrevPage: false,
-            },
-          );
-
-          // Clear selections when fetching new data
-          setSelectedUsers(new Set());
-
-          console.log("Users loaded:", data.users?.length || 0);
-        } else {
-          const errorData = await response.json();
-          console.error("Failed to fetch users:", errorData.message);
-          alert("Failed to fetch users. Please try again.");
-        }
-      } catch (error) {
-        console.error("Error fetching users:", error);
-        // Fallback to mock data
-        const mockUsers = [
-          {
-            id: "1",
-            displayName: "John Doe",
-            email: "john@example.com",
-            provider: "google",
-            subscription: "premium",
-            createdAt: "2024-01-15T10:30:00Z",
-            lastLogin: "2024-09-13T08:45:00Z",
-            photoUrl:
-              "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face",
-          },
-        ];
-        setUsers(mockUsers);
-        setUserStats({
-          totalUsers: 1,
-          subscribedUsers: 1,
-          activeToday: 1,
-          newThisWeek: 1,
-        });
+        setUsers(data.users ?? []);
+        setUserStats(
+          data.stats ?? {
+            totalUsers: 0,
+            subscribedUsers: 0,
+            activeToday: 0,
+            newThisWeek: 0,
+          }
+        );
+        setPagination(
+          data.pagination ?? {
+            currentPage: page,
+            totalPages: 1,
+            totalUsers: 0,
+            usersPerPage: limit,
+            hasNextPage: false,
+            hasPrevPage: false,
+          }
+        );
+        setSelectedUsers(new Set());
+      } catch {
+        // silently fail — users list just stays empty
       } finally {
-        setLoading(false);
+        setUsersLoading(false);
       }
     },
-    [],
+    []
   );
 
-  // Load demo data when component mounts
+  // Debounced search
   useEffect(() => {
     if (!configLoaded) return;
-
-    fetchUsers(1, 10, searchTerm, filterProvider, filterSubscription);
-  }, []);
-
-  // Handle search with debouncing
-  useEffect(() => {
-    if (searchDebounceTimer) {
-      clearTimeout(searchDebounceTimer);
-    }
-
     const timer = setTimeout(() => {
-      if (!configLoaded) return;
-      fetchUsers(
-        1,
-        pagination.usersPerPage,
-        searchTerm,
-        filterProvider,
-        filterSubscription,
-      );
+      fetchUsers(1, pagination.usersPerPage, searchTerm, filterProvider, filterSubscription);
     }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, filterProvider, filterSubscription]);
 
-    setSearchDebounceTimer(timer);
-
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [searchTerm, filterProvider, filterSubscription, pagination.usersPerPage]);
-
-  // Handle page change
-  const handlePageChange = (newPage: number) => {
-    if (newPage >= 1 && newPage <= pagination.totalPages) {
-      fetchUsers(
-        newPage,
-        pagination.usersPerPage,
-        searchTerm,
-        filterProvider,
-        filterSubscription,
-      );
-    }
+  // ── User selection ────────────────────────────────────────────────────
+  const toggleUser = (id: string) => {
+    setSelectedUsers((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
-  // User selection handlers
-  const toggleUserSelection = (userId: string) => {
-    const newSelected = new Set(selectedUsers);
-    if (newSelected.has(userId)) {
-      newSelected.delete(userId);
-    } else {
-      newSelected.add(userId);
-    }
-    setSelectedUsers(newSelected);
+  const toggleAll = () => {
+    setSelectedUsers((prev) =>
+      prev.size === users.length && users.length > 0
+        ? new Set()
+        : new Set(users.map((u) => u.id))
+    );
   };
 
-  const toggleAllUsers = () => {
-    if (selectedUsers.size === users.length && users.length > 0) {
-      setSelectedUsers(new Set());
-    } else {
-      setSelectedUsers(new Set(users.map((user) => user.id)));
-    }
+  // ── Export ────────────────────────────────────────────────────────────
+  const exportSelectedUsers = () => {
+    const data = users.filter((u) => selectedUsers.has(u.id));
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `users_${new Date().toISOString().split("T")[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  // Export selected users
-  const exportUsers = () => {
-    if (selectedUsers.size === 0) {
-      alert("Please select users to export.");
+  // ── Send email to selected users ──────────────────────────────────────
+  const sendToSelected = async () => {
+    if (!emailSubject.trim() || !emailContent.trim()) {
+      setEmailError("Subject and content are required");
       return;
     }
-
-    const selectedUserData = users.filter((user) => selectedUsers.has(user.id));
-    const dataStr = JSON.stringify(selectedUserData, null, 2);
-    const dataUri =
-      "data:application/json;charset=utf-8," + encodeURIComponent(dataStr);
-
-    const exportFileDefaultName = `users_export_${
-      new Date().toISOString().split("T")[0]
-    }.json`;
-
-    const linkElement = document.createElement("a");
-    linkElement.setAttribute("href", dataUri);
-    linkElement.setAttribute("download", exportFileDefaultName);
-    linkElement.click();
-  };
-
-  // Send email to selected users
-  const sendEmail = async () => {
-    if (selectedUsers.size === 0 || !configLoaded) {
-      alert("Please select at least one user to send email.");
-      return;
-    }
+    setEmailSending(true);
+    setEmailError(null);
 
     const selectedEmails = users
-      .filter((user) => selectedUsers.has(user.id))
-      .map((user) => user.email);
+      .filter((u) => selectedUsers.has(u.id))
+      .map((u) => u.email);
 
-    setLoading(true);
+    const resolvedFrom =
+      emailFromName === "Custom" ? emailCustomFrom : emailFromName;
+
     try {
-      const response = await fetch("/api/send-email", {
+      const res = await fetch("/api/send-email", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           emails: selectedEmails,
           subject: emailSubject,
           content: emailContent,
           sendToAll: false,
-          fromName: fromName === "Custom" ? customFromName : fromName,
+          fromName: resolvedFrom,
         }),
       });
-
-      const result = await response.json();
-
-      if (response.ok) {
-        alert(`${result.message}`);
-        setShowEmailModal(false);
+      const data = (await res.json()) as { message: string };
+      if (res.ok) {
+        setShowSelectedEmailModal(false);
         setEmailSubject("");
         setEmailContent("");
         setSelectedUsers(new Set());
       } else {
-        alert(`Failed to send emails: ${result.message}`);
+        setEmailError(data.message);
       }
-    } catch (error) {
-      console.error("Error sending email:", error);
-      alert("Error sending email. Please try again.");
+    } catch {
+      setEmailError("Network error. Please try again.");
     } finally {
-      setLoading(false);
+      setEmailSending(false);
     }
   };
 
-  // Format date
-  const formatDate = (dateString: string) => {
-    if (!dateString) return "Never";
-    const date = new Date(dateString);
-    return isNaN(date.getTime())
-      ? "Invalid date"
-      : date.toLocaleDateString("en-US", {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        });
-  };
-
-  // Get subscription badge style
-  const getSubscriptionBadge = (subscription: string) => {
-    if (subscription === "premium") {
-      return "bg-gradient-to-r from-purple-500 to-pink-500 text-white";
-    }
-    return "bg-gray-100 text-gray-700";
-  };
-
-  // Generate pagination numbers
-  const getPaginationNumbers = () => {
+  // ── Pagination page numbers ───────────────────────────────────────────
+  const getPaginationNumbers = (): number[] => {
     const { currentPage, totalPages } = pagination;
     const maxVisible = 5;
     let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
     const end = Math.min(totalPages, start + maxVisible - 1);
-
-    if (end - start + 1 < maxVisible) {
-      start = Math.max(1, end - maxVisible + 1);
-    }
-
+    if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
     return Array.from({ length: end - start + 1 }, (_, i) => start + i);
   };
 
+  // ── Render ────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b">
+
+      {/* ── Header ─────────────────────────────────────────────────── */}
+      <header className="bg-white border-b border-gray-100 sticky top-0 z-30 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-6">
-            <div className="flex items-center">
-              <Users className="h-8 w-8 text-indigo-600 mr-3" />
-              <h1 className="text-3xl font-bold text-gray-900">{appName}</h1>
+          <div className="flex items-center justify-between h-16">
+            {/* Logo + name */}
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-600 rounded-xl">
+                <Users className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-base font-bold text-gray-900 leading-none">
+                  {appName}
+                </h1>
+                {configLoaded && (
+                  <p className="text-xs text-gray-400 leading-none mt-0.5">
+                    Admin Dashboard
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="flex items-center space-x-4">
+
+            {/* Right actions */}
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowNotificationModal(true)}
-                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                title="Send push notification"
               >
-                <Bell className="h-4 w-4 mr-2" />
-                Send Notification
-              </button>
-              <button
-                onClick={() => setShowBulkEmailModal(true)}
-                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-              >
-                <Send className="h-4 w-4 mr-2" />
-                Bulk Email All Users
+                <Bell className="h-4 w-4" />
+                <span className="hidden sm:inline">Notify</span>
               </button>
               <button
                 onClick={() => setShowConfigModal(true)}
-                className={`flex items-center px-4 py-2 rounded-lg transition-colors ${
+                className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
                   configLoaded
-                    ? "bg-green-100 text-green-800 border border-green-200"
+                    ? "bg-green-50 text-green-700 border border-green-200"
                     : "bg-indigo-600 text-white hover:bg-indigo-700"
                 }`}
               >
-                <Settings className="h-4 w-4 mr-2" />
-                {configLoaded ? "Config Loaded ✓" : "Load Firebase Config"}
+                <Settings className="h-4 w-4" />
+                {configLoaded ? "Config ✓" : "Load Config"}
               </button>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-            <div className="flex items-center">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <Users className="h-6 w-6 text-blue-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Users</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {userStats.totalUsers.toLocaleString()}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-            <div className="flex items-center">
-              <div className="p-2 bg-purple-100 rounded-lg">
-                <UserPlus className="h-6 w-6 text-purple-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">
-                  Premium Users
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {userStats.subscribedUsers.toLocaleString()}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-            <div className="flex items-center">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <Eye className="h-6 w-6 text-green-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">
-                  Active Today
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {userStats.activeToday.toLocaleString()}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-            <div className="flex items-center">
-              <div className="p-2 bg-yellow-100 rounded-lg">
-                <UserPlus className="h-6 w-6 text-yellow-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">
-                  New This Week
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {userStats.newThisWeek.toLocaleString()}
-                </p>
-              </div>
-            </div>
+          {/* Tab navigation */}
+          <div className="flex gap-0 -mb-px">
+            {(
+              [
+                { id: "users" as const, label: "Users", icon: Users },
+                { id: "campaigns" as const, label: "Campaigns", icon: Megaphone },
+              ]
+            ).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === id
+                    ? "border-indigo-600 text-indigo-600"
+                    : "border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300"
+                }`}
+              >
+                <Icon className="h-4 w-4" />
+                {label}
+              </button>
+            ))}
           </div>
         </div>
+      </header>
 
-        {/* Filters and Actions */}
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-8 border border-gray-100">
-          <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-            <div className="flex flex-col sm:flex-row gap-4 flex-1">
-              {/* Search */}
-              <div className="relative flex-1 min-w-64">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                <input
-                  type="text"
-                  placeholder="Search users..."
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
+      {/* ── Main content ─────────────────────────────────────────────── */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
-              {/* Filters */}
-              <select
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                value={filterProvider}
-                onChange={(e) => setFilterProvider(e.target.value)}
-              >
-                <option value="all">All Providers</option>
-                <option value="google">Google</option>
-                <option value="facebook">Facebook</option>
-                <option value="email">Email</option>
-              </select>
-
-              <select
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                value={filterSubscription}
-                onChange={(e) => setFilterSubscription(e.target.value)}
-              >
-                <option value="all">All Subscriptions</option>
-                <option value="premium">Premium</option>
-                <option value="trial">Trial</option>
-              </select>
-            </div>
-
-            {/* Action Buttons */}
-            {selectedUsers.size > 0 && (
-              <div className="flex gap-2">
+        {/* ══ USERS TAB ══════════════════════════════════════════════ */}
+        {activeTab === "users" && (
+          <div className="space-y-6">
+            {!configLoaded ? (
+              <div className="flex flex-col items-center justify-center py-32 text-gray-400">
+                <Settings className="h-14 w-14 mb-4 opacity-20" />
+                <p className="text-lg font-medium text-gray-500">
+                  No app connected
+                </p>
+                <p className="text-sm mt-1">
+                  Load your Firebase config to view users
+                </p>
                 <button
-                  onClick={() => setShowEmailModal(true)}
-                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  onClick={() => setShowConfigModal(true)}
+                  className="mt-4 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700"
                 >
-                  <Mail className="h-4 w-4 mr-2" />
-                  Email ({selectedUsers.size})
-                </button>
-                <button
-                  onClick={exportUsers}
-                  className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                >
-                  <Download className="h-4 w-4 mr-2" />
-                  Export ({selectedUsers.size})
+                  Load Firebase Config
                 </button>
               </div>
+            ) : (
+              <>
+                {/* Stats cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  {[
+                    {
+                      label: "Total Users",
+                      value: userStats.totalUsers,
+                      icon: Users,
+                      color: "bg-blue-100 text-blue-600",
+                    },
+                    {
+                      label: "Premium",
+                      value: userStats.subscribedUsers,
+                      icon: UserPlus,
+                      color: "bg-purple-100 text-purple-600",
+                    },
+                    {
+                      label: "Active Today",
+                      value: userStats.activeToday,
+                      icon: Eye,
+                      color: "bg-green-100 text-green-600",
+                    },
+                    {
+                      label: "New This Week",
+                      value: userStats.newThisWeek,
+                      icon: UserPlus,
+                      color: "bg-amber-100 text-amber-600",
+                    },
+                  ].map(({ label, value, icon: Icon, color }) => (
+                    <div
+                      key={label}
+                      className="bg-white rounded-xl border border-gray-100 shadow-sm p-5"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${color}`}>
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                            {label}
+                          </p>
+                          <p className="text-2xl font-bold text-gray-900">
+                            {value.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Search / filters / actions */}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                  <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center">
+                    {/* Search */}
+                    <div className="relative flex-1 min-w-0">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Search by name or email…"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    {/* Filters */}
+                    <select
+                      value={filterProvider}
+                      onChange={(e) => setFilterProvider(e.target.value)}
+                      className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                    >
+                      <option value="all">All Providers</option>
+                      <option value="google">Google</option>
+                      <option value="facebook">Facebook</option>
+                      <option value="email">Email</option>
+                    </select>
+
+                    <select
+                      value={filterSubscription}
+                      onChange={(e) => setFilterSubscription(e.target.value)}
+                      className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                    >
+                      <option value="all">All Plans</option>
+                      <option value="premium">Premium</option>
+                      <option value="trial">Trial</option>
+                      <option value="free">Free</option>
+                    </select>
+
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {selectedUsers.size > 0 ? (
+                        <>
+                          <button
+                            onClick={() => setShowSelectedEmailModal(true)}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                          >
+                            <Mail className="h-4 w-4" />
+                            Email ({selectedUsers.size})
+                          </button>
+                          <button
+                            onClick={exportSelectedUsers}
+                            className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                          >
+                            <Download className="h-4 w-4" />
+                            Export ({selectedUsers.size})
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => setShowBulkEmailModal(true)}
+                          className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          <Send className="h-4 w-4" />
+                          Email All
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Users table */}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                  {usersLoading ? (
+                    <div className="flex items-center justify-center py-20">
+                      <Loader2 className="h-6 w-6 animate-spin text-indigo-500 mr-3" />
+                      <span className="text-gray-500">Loading users…</span>
+                    </div>
+                  ) : users.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+                      <Users className="h-10 w-10 mb-3 opacity-30" />
+                      <p className="font-medium text-gray-500">No users found</p>
+                      <p className="text-sm mt-1">
+                        Try adjusting your filters
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full">
+                          <thead>
+                            <tr className="bg-gray-50 border-b border-gray-100">
+                              <th className="px-5 py-3 text-left">
+                                <button
+                                  onClick={toggleAll}
+                                  className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-800"
+                                >
+                                  {selectedUsers.size === users.length &&
+                                  users.length > 0 ? (
+                                    <CheckSquare className="h-4 w-4 text-indigo-600" />
+                                  ) : (
+                                    <Square className="h-4 w-4" />
+                                  )}
+                                  Select
+                                </button>
+                              </th>
+                              {["User", "Email", "Provider", "Plan", "Joined", "Last Login"].map(
+                                (h) => (
+                                  <th
+                                    key={h}
+                                    className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
+                                  >
+                                    {h}
+                                  </th>
+                                )
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {users.map((user) => (
+                              <tr
+                                key={user.id}
+                                onClick={() => toggleUser(user.id)}
+                                className={`cursor-pointer transition-colors hover:bg-gray-50 ${
+                                  selectedUsers.has(user.id)
+                                    ? "bg-indigo-50 border-l-2 border-l-indigo-500"
+                                    : ""
+                                }`}
+                              >
+                                <td className="px-5 py-3.5">
+                                  {selectedUsers.has(user.id) ? (
+                                    <CheckSquare className="h-4 w-4 text-indigo-600" />
+                                  ) : (
+                                    <Square className="h-4 w-4 text-gray-400" />
+                                  )}
+                                </td>
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-3">
+                                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold shrink-0 overflow-hidden">
+                                      {user.photoUrl ? (
+                                        <Image
+                                          src={user.photoUrl}
+                                          alt={user.displayName}
+                                          width={32}
+                                          height={32}
+                                          className="object-cover"
+                                        />
+                                      ) : (
+                                        (user.displayName?.charAt(0).toUpperCase()) || "?"
+                                      )}
+                                    </div>
+                                    <span className="text-sm font-medium text-gray-900">
+                                      {user.displayName || "—"}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-5 py-3.5 text-sm text-gray-600">
+                                  {user.email}
+                                </td>
+                                <td className="px-5 py-3.5">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 capitalize">
+                                    {user.provider || "—"}
+                                  </span>
+                                </td>
+                                <td className="px-5 py-3.5">
+                                  <span
+                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${subscriptionBadge(user.subscriptionType)}`}
+                                  >
+                                    {user.subscriptionType || "free"}
+                                  </span>
+                                </td>
+                                <td className="px-5 py-3.5 text-sm text-gray-400">
+                                  {formatDate(user.createdAt)}
+                                </td>
+                                <td className="px-5 py-3.5 text-sm text-gray-400">
+                                  {formatDate(user.lastLogin)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Pagination */}
+                      <PaginationBar
+                        pagination={pagination}
+                        loading={usersLoading}
+                        onPageChange={(p) =>
+                          fetchUsers(
+                            p,
+                            pagination.usersPerPage,
+                            searchTerm,
+                            filterProvider,
+                            filterSubscription
+                          )
+                        }
+                      />
+                    </>
+                  )}
+                </div>
+              </>
             )}
           </div>
-        </div>
+        )}
 
-        {/* Users Table */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          {loading ? (
-            <div className="flex justify-center items-center py-16">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-              <p className="ml-3 text-gray-600">Loading users...</p>
-            </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        <button
-                          onClick={toggleAllUsers}
-                          className="flex items-center space-x-2 hover:text-gray-700"
-                        >
-                          {selectedUsers.size === users.length &&
-                          users.length > 0 ? (
-                            <CheckSquare className="h-4 w-4" />
-                          ) : (
-                            <Square className="h-4 w-4" />
-                          )}
-                          <span>Select</span>
-                        </button>
-                      </th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        User
-                      </th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Email
-                      </th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Provider
-                      </th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Subscription
-                      </th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Created
-                      </th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Last Login
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {users.map((user) => (
-                      <tr
-                        key={user.id}
-                        className={`hover:bg-gray-50 transition-colors ${
-                          selectedUsers.has(user.id)
-                            ? "bg-indigo-50 border-l-4 border-indigo-500"
-                            : ""
-                        }`}
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <button
-                            onClick={() => toggleUserSelection(user.id)}
-                            className="text-indigo-600 hover:text-indigo-800"
-                          >
-                            {selectedUsers.has(user.id) ? (
-                              <CheckSquare className="h-4 w-4" />
-                            ) : (
-                              <Square className="h-4 w-4" />
-                            )}
-                          </button>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
-                            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-medium mr-3">
-                              {user.photoUrl ? (
-                                <Image
-                                  src={user.photoUrl}
-                                  alt={user.displayName}
-                                  width={40}
-                                  height={40}
-                                  className="h-10 w-10 rounded-full object-cover"
-                                />
-                              ) : (
-                                user.displayName?.charAt(0).toUpperCase() || "?"
-                              )}
-                            </div>
-                            <div>
-                              <div className="text-sm font-medium text-gray-900">
-                                {user.displayName || "No Name"}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">
-                            {user.email}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize bg-gray-100 text-gray-800">
-                            {user.provider || "Unknown"}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${getSubscriptionBadge(
-                              user.subscriptionType || "free",
-                            )}`}
-                          >
-                            {user.subscriptionType || "free"}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {formatDate(user.createdAt)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {formatDate(user.lastLogin)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+        {/* ══ CAMPAIGNS TAB ══════════════════════════════════════════ */}
+        {activeTab === "campaigns" && (
+          <CampaignList configLoaded={configLoaded} />
+        )}
+      </main>
 
-              {/* Pagination */}
-              <div className="bg-white px-6 py-4 flex items-center justify-between border-t border-gray-200">
-                <div className="flex-1 flex justify-between sm:hidden">
-                  <button
-                    onClick={() => handlePageChange(pagination.currentPage - 1)}
-                    disabled={!pagination.hasPrevPage || loading}
-                    className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => handlePageChange(pagination.currentPage + 1)}
-                    disabled={!pagination.hasNextPage || loading}
-                    className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
-                </div>
-                <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm text-gray-700">
-                      Showing{" "}
-                      <span className="font-medium">
-                        {(pagination.currentPage - 1) *
-                          pagination.usersPerPage +
-                          1}
-                      </span>{" "}
-                      to{" "}
-                      <span className="font-medium">
-                        {Math.min(
-                          pagination.currentPage * pagination.usersPerPage,
-                          pagination.totalUsers,
-                        )}
-                      </span>{" "}
-                      of{" "}
-                      <span className="font-medium">
-                        {pagination.totalUsers.toLocaleString()}
-                      </span>{" "}
-                      results
-                    </p>
-                  </div>
-                  <div>
-                    <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                      <button
-                        onClick={() =>
-                          handlePageChange(pagination.currentPage - 1)
-                        }
-                        disabled={!pagination.hasPrevPage || loading}
-                        className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <ChevronLeft className="h-5 w-5" />
-                      </button>
-
-                      {getPaginationNumbers().map((pageNum) => (
-                        <button
-                          key={pageNum}
-                          onClick={() => handlePageChange(pageNum)}
-                          disabled={loading}
-                          className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                            pagination.currentPage === pageNum
-                              ? "z-10 bg-indigo-50 border-indigo-500 text-indigo-600"
-                              : "bg-white border-gray-300 text-gray-500 hover:bg-gray-50"
-                          } ${loading ? "cursor-not-allowed opacity-50" : ""}`}
-                        >
-                          {pageNum}
-                        </button>
-                      ))}
-
-                      <button
-                        onClick={() =>
-                          handlePageChange(pagination.currentPage + 1)
-                        }
-                        disabled={!pagination.hasNextPage || loading}
-                        className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <ChevronRight className="h-5 w-5" />
-                      </button>
-                    </nav>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Firebase Config Modal */}
+      {/* ── Firebase Config Modal ─────────────────────────────────────── */}
       {showConfigModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96 max-w-90vw">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
-              Load Firebase Configuration
-            </h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Upload your Firebase service account JSON file to connect to your
-              project.
-            </p>
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleFileUpload}
-              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
-            />
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => setShowConfigModal(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setShowConfigModal(false);
-                  if (!configLoaded) return;
-                  fetchUsers(
-                    1,
-                    pagination.usersPerPage,
-                    searchTerm,
-                    filterProvider,
-                    filterSubscription,
-                  );
-                }}
-                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
-              >
-                Use Demo Data
-              </button>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h3 className="font-bold text-gray-900">Connect Firebase App</h3>
+              {configLoaded && (
+                <button
+                  onClick={() => setShowConfigModal(false)}
+                  className="p-1.5 hover:bg-gray-100 rounded-lg"
+                >
+                  <X className="h-5 w-5 text-gray-400" />
+                </button>
+              )}
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-500">
+                Upload your Firebase service account JSON file to connect to
+                your app&apos;s Firestore database.
+              </p>
+
+              <label className="flex flex-col items-center justify-center w-full border-2 border-dashed border-gray-300 rounded-xl p-8 cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors">
+                <Settings className="h-8 w-8 text-gray-400 mb-2" />
+                <span className="text-sm font-medium text-gray-600">
+                  Click to upload service account JSON
+                </span>
+                <span className="text-xs text-gray-400 mt-1">
+                  .json files only
+                </span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </label>
+
+              {configError && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {configError}
+                </div>
+              )}
+
+              {configLoaded && (
+                <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                  <Settings className="h-4 w-4 shrink-0" />
+                  Connected to <strong className="ml-1">{appName}</strong>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Individual Email Modal */}
-      {showEmailModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96 max-w-90vw max-h-90vh overflow-y-auto">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
-              Send Email to {selectedUsers.size} Selected Users
-            </h3>
-            <div className="space-y-4">
+      {/* ── Send email to selected users modal ────────────────────────── */}
+      {showSelectedEmailModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h3 className="font-bold text-gray-900">
+                Email {selectedUsers.size} selected user
+                {selectedUsers.size !== 1 ? "s" : ""}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowSelectedEmailModal(false);
+                  setEmailError(null);
+                }}
+                className="p-1.5 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* From name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  From Name
+                  From
                 </label>
                 <select
-                  value={fromName}
-                  onChange={(e) => setFromName(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  value={emailFromName}
+                  onChange={(e) => setEmailFromName(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <option value="Tibetan Keyboard">Tibetan Keyboard</option>
-                  <option value="Tibetan Calendar">Tibetan Calendar</option>
-                  <option value="Tibetan Language Learning App">
-                    Tibetan Language Learning App
-                  </option>
-                  <option value="Tibetan Prayer">Tibetan Prayer</option>
-                  <option value="Tibetan Dictionary">Tibetan Dictionary</option>
-                  <option value="YiglyChecker">YiglyChecker</option>
-                  <option value="Custom">Custom...</option>
+                  {[
+                    "Tibetan Keyboard",
+                    "Tibetan Calendar",
+                    "Tibetan Language Learning App",
+                    "Tibetan Prayer",
+                    "Tibetan Dictionary",
+                    "YiglyChecker",
+                  ].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                  <option value="Custom">Custom…</option>
                 </select>
-                {fromName === "Custom" && (
+                {emailFromName === "Custom" && (
                   <input
                     type="text"
-                    value={customFromName}
-                    onChange={(e) => setCustomFromName(e.target.value)}
-                    className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    placeholder="Enter custom app name"
+                    value={emailCustomFrom}
+                    onChange={(e) => setEmailCustomFrom(e.target.value)}
+                    className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Custom sender name"
                   />
                 )}
               </div>
+
+              {/* Subject */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Subject
                 </label>
                 <input
                   type="text"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   value={emailSubject}
                   onChange={(e) => setEmailSubject(e.target.value)}
-                  placeholder="Enter email subject"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Email subject"
                 />
               </div>
+
+              {/* Content */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Content
+                  Message
                 </label>
                 <textarea
-                  rows={6}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  rows={5}
                   value={emailContent}
                   onChange={(e) => setEmailContent(e.target.value)}
-                  placeholder="Enter email content (plain text)"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                  placeholder="Plain text message"
                 />
               </div>
+
+              {emailError && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {emailError}
+                </div>
+              )}
             </div>
-            <div className="mt-6 flex justify-end space-x-3">
+
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
               <button
-                onClick={() => setShowEmailModal(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                onClick={() => {
+                  setShowSelectedEmailModal(false);
+                  setEmailError(null);
+                }}
+                className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+                disabled={emailSending}
               >
                 Cancel
               </button>
               <button
-                onClick={sendEmail}
-                disabled={!emailSubject || !emailContent || loading}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => void sendToSelected()}
+                disabled={
+                  emailSending || !emailSubject.trim() || !emailContent.trim()
+                }
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                {loading ? "Sending..." : "Send Email"}
+                {emailSending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {emailSending ? "Sending…" : "Send"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Bulk Email Modal */}
-      {/* Email Modal */}
+      {/* ── Other modals (unchanged) ──────────────────────────────────── */}
       {showBulkEmailModal && (
         <EmailModal
           onClose={() => setShowBulkEmailModal(false)}
-          onSend={() => {
-            setShowBulkEmailModal(false);
-            // Optionally show success message
-          }}
+          onSend={() => setShowBulkEmailModal(false)}
         />
       )}
       {showNotificationModal && (
         <NotificationModal
           onClose={() => setShowNotificationModal(false)}
-          onSend={() => {
-            setShowNotificationModal(false);
-            // Optionally show success message
-          }}
+          onSend={() => setShowNotificationModal(false)}
         />
       )}
     </div>
   );
-};
-
-export default UserManagementDashboard;
+}

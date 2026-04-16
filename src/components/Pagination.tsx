@@ -1,104 +1,75 @@
-import { PaginationInfo } from "../lib/types";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import type { Pagination } from "../lib/types";
 
 interface PaginationProps {
-  pagination: PaginationInfo;
+  pagination: Pagination;
   onPageChange: (page: number) => void;
+  loading?: boolean;
 }
 
-export default function Pagination({
+export default function PaginationBar({
   pagination,
   onPageChange,
+  loading = false,
 }: PaginationProps) {
-  const { currentPage, totalPages } = pagination;
+  const { currentPage, totalPages, totalUsers, usersPerPage } = pagination;
 
-  const getPageNumbers = () => {
-    const pages = [];
+  const start = (currentPage - 1) * usersPerPage + 1;
+  const end = Math.min(currentPage * usersPerPage, totalUsers);
+
+  const getPageNumbers = (): number[] => {
     const maxVisible = 5;
-
-    let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
-    const end = Math.min(totalPages, start + maxVisible - 1);
-
-    if (end - start + 1 < maxVisible) {
-      start = Math.max(1, end - maxVisible + 1);
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    const endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    if (endPage - startPage + 1 < maxVisible) {
+      startPage = Math.max(1, endPage - maxVisible + 1);
     }
-
-    for (let i = start; i <= end; i++) {
-      pages.push(i);
-    }
-
-    return pages;
+    return Array.from({ length: endPage - startPage + 1 }, (_, i) => startPage + i);
   };
 
+  if (totalPages <= 1) return null;
+
   return (
-    <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6 mt-6 rounded-lg">
-      <div className="flex-1 flex justify-between sm:hidden">
+    <div className="flex items-center justify-between px-6 py-3 border-t border-gray-100">
+      <p className="text-sm text-gray-500">
+        Showing <span className="font-medium text-gray-900">{start}–{end}</span> of{" "}
+        <span className="font-medium text-gray-900">{totalUsers.toLocaleString()}</span>
+      </p>
+
+      <nav className="flex items-center gap-1">
         <button
           onClick={() => onPageChange(currentPage - 1)}
-          disabled={currentPage === 1}
-          className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!pagination.hasPrevPage || loading}
+          className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          aria-label="Previous page"
         >
-          Previous
+          <ChevronLeft className="h-4 w-4" />
         </button>
+
+        {getPageNumbers().map((page) => (
+          <button
+            key={page}
+            onClick={() => onPageChange(page)}
+            disabled={loading}
+            className={`min-w-[32px] h-8 px-2 text-sm rounded-md font-medium transition-colors ${
+              page === currentPage
+                ? "bg-indigo-600 text-white"
+                : "text-gray-600 hover:bg-gray-100"
+            } disabled:cursor-not-allowed`}
+          >
+            {page}
+          </button>
+        ))}
+
         <button
           onClick={() => onPageChange(currentPage + 1)}
-          disabled={currentPage === totalPages}
-          className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!pagination.hasNextPage || loading}
+          className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          aria-label="Next page"
         >
-          Next
+          <ChevronRight className="h-4 w-4" />
         </button>
-      </div>
-      <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm text-gray-700">
-            Showing{" "}
-            <span className="font-medium">
-              {(currentPage - 1) * pagination.usersPerPage + 1}
-            </span>{" "}
-            to{" "}
-            <span className="font-medium">
-              {Math.min(
-                currentPage * pagination.usersPerPage,
-                pagination.totalUsers
-              )}
-            </span>{" "}
-            of <span className="font-medium">{pagination.totalUsers}</span>{" "}
-            results
-          </p>
-        </div>
-        <div>
-          <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-            <button
-              onClick={() => onPageChange(currentPage - 1)}
-              disabled={currentPage === 1}
-              className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Previous
-            </button>
-
-            {getPageNumbers().map((page) => (
-              <button
-                key={page}
-                onClick={() => onPageChange(page)}
-                className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                  page === currentPage
-                    ? "z-10 bg-blue-50 border-blue-500 text-blue-600"
-                    : "bg-white border-gray-300 text-gray-500 hover:bg-gray-50"
-                }`}
-              >
-                {page}
-              </button>
-            ))}
-
-            <button
-              onClick={() => onPageChange(currentPage + 1)}
-              disabled={currentPage === totalPages}
-              className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Next
-            </button>
-          </nav>
-        </div>
-      </div>
+      </nav>
     </div>
   );
 }

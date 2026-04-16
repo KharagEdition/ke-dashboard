@@ -1,358 +1,229 @@
-// src/app/api/send-email/route.ts
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "../../../lib/firebase-admin";
-import { User } from "../../../lib/types";
+import { db } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { BrevoClient } from "@getbrevo/brevo";
+import { filterValidUsers, DAILY_EMAIL_LIMIT } from "@/lib/campaignService";
+import { DailyEmailStatsDoc } from "@/lib/firestoreTypes";
+import type { User } from "@/lib/types";
 
-// Initialize Brevo API
-const brevoClient = new BrevoClient({ apiKey: process.env.BREVO_API_KEY! });
-const emailLimit = 300;
+const brevo = new BrevoClient({ apiKey: process.env.BREVO_API_KEY! });
 
-interface EmailTrackingRecord {
-  userId: string;
-  email: string;
+interface SendEmailBody {
+  emails?: string[];
   subject: string;
-  sentAt: Date;
+  content?: string;
+  htmlContent?: string;
+  sendToAll?: boolean;
+  fromName?: string;
+}
+
+interface SendResult {
+  email: string;
   messageId?: string;
-  campaignId?: string;
+  error?: string;
+  success: boolean;
 }
 
-interface DailyEmailStats {
-  date: string;
-  emailsSent: number;
-  lastUpdated: Date;
-}
-
-export async function POST(request: NextRequest) {
+// POST /api/send-email — ad-hoc sends (selected users or quick blast to all)
+export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const body = await request.json();
+    const body = (await request.json()) as SendEmailBody;
     const {
-      // For individual emails (from dashboard selection)
-      emails, // Array of email addresses
+      emails,
       subject,
-      content, // Plain text content from dashboard
-
-      // For bulk emails (send to all users)
-      htmlContent, // Rich HTML content for bulk emails
-      campaignId,
-      maxEmailsPerDay = emailLimit,
-      skipDuplicates = true,
-      sendToAll = false, // Flag to determine if sending to all users or just selected ones
+      content,
+      htmlContent,
+      sendToAll = false,
       fromName,
     } = body;
 
-    const senderName = fromName || process.env.FROM_NAME || "KharagEdition";
-    const appName = fromName || process.env.APP_NAME || "";
-
-    if (!subject || (!content && !htmlContent)) {
+    if (!subject?.trim() || (!content?.trim() && !htmlContent?.trim())) {
       return NextResponse.json(
         { message: "Subject and content are required" },
         { status: 400 }
       );
     }
 
+    const senderName =
+      fromName?.trim() || process.env.FROM_NAME || "KharagEdition";
+
+    // ── Check daily quota ─────────────────────────────────────────────────
     const today = new Date().toISOString().split("T")[0];
+    const statsDoc = await db.collection("emailStats").doc(today).get();
+    const emailsSentToday = statsDoc.exists
+      ? (statsDoc.data() as DailyEmailStatsDoc).emailsSent ?? 0
+      : 0;
+    const remainingQuota = Math.max(0, DAILY_EMAIL_LIMIT - emailsSentToday);
 
-    // Check daily email quota
-    const dailyStatsDoc = await db.collection("emailStats").doc(today).get();
-    const dailyStats: DailyEmailStats = dailyStatsDoc.exists
-      ? (dailyStatsDoc.data() as DailyEmailStats)
-      : { date: today, emailsSent: 0, lastUpdated: new Date() };
-
-    const remainingQuota = maxEmailsPerDay - dailyStats.emailsSent;
-
-    if (remainingQuota <= 0) {
+    if (remainingQuota === 0) {
       return NextResponse.json(
         {
-          message: `Daily email quota (${maxEmailsPerDay}) exceeded. Emails sent today: ${dailyStats.emailsSent}`,
+          message: `Daily limit (${DAILY_EMAIL_LIMIT}) reached. Emails sent today: ${emailsSentToday}.`,
           remainingQuota: 0,
-          emailsSentToday: dailyStats.emailsSent,
+          emailsSentToday,
         },
         { status: 429 }
       );
     }
 
-    let finalUsersList: User[] = [];
+    // ── Resolve recipient list ────────────────────────────────────────────
+    let recipients: User[] = [];
+
+    const usersSnap = await db.collection("users").get();
+    const allUsers: User[] = usersSnap.docs.map((doc) => {
+      const d = doc.data();
+      return {
+        id: doc.id,
+        displayName: (d.displayName as string) ?? "",
+        email: (d.email as string) ?? "",
+        provider: (d.provider as string) ?? "",
+        createdAt: "",
+        lastLogin: "",
+        photoUrl: d.photoUrl as string | undefined,
+        subscriptionType: d.subscriptionType as string | undefined,
+      };
+    });
 
     if (sendToAll) {
-      // Bulk email to all users
-      const usersSnapshot = await db.collection("users").get();
-      const allUsers: User[] = usersSnapshot.docs.map(
-        (doc) =>
-          ({
-            id: doc.id,
-            ...doc.data(),
-          } as User)
-      );
-
-      const validatedUsers = allUsers.filter(
-        (user) => user.email && user.email.includes("@")
-      );
-
-      if (validatedUsers.length === 0) {
-        return NextResponse.json(
-          { message: "No valid email addresses found" },
-          { status: 400 }
-        );
-      }
-
-      finalUsersList = validatedUsers;
-
-      // Filter out duplicates if skipDuplicates is enabled
-      if (skipDuplicates) {
-        const emailTrackingQuery = db
-          .collection("emailTracking")
-          .where("sentAt", ">=", new Date(`${today}T00:00:00Z`))
-          .where("sentAt", "<", new Date(`${today}T23:59:59Z`));
-
-        const trackingSnapshot = campaignId
-          ? await emailTrackingQuery.where("campaignId", "==", campaignId).get()
-          : await emailTrackingQuery.where("subject", "==", subject).get();
-
-        const alreadySentEmails = new Set(
-          trackingSnapshot.docs.map((doc) => doc.data().email)
-        );
-
-        finalUsersList = validatedUsers.filter(
-          (user) => !alreadySentEmails.has(user.email)
-        );
-
-        console.log(
-          `Filtered out ${
-            validatedUsers.length - finalUsersList.length
-          } users who already received this email today`
-        );
-      }
+      recipients = filterValidUsers(allUsers);
     } else {
-      // Individual emails to selected users
-      if (!emails || !Array.isArray(emails) || emails.length === 0) {
+      if (!emails || emails.length === 0) {
         return NextResponse.json(
           { message: "No email addresses provided" },
           { status: 400 }
         );
       }
-
-      // Get user data for the selected emails
-      const usersSnapshot = await db.collection("users").get();
-      const allUsers: User[] = usersSnapshot.docs.map(
-        (doc) =>
-          ({
-            id: doc.id,
-            ...doc.data(),
-          } as User)
+      const emailSet = new Set(emails.map((e) => e.toLowerCase()));
+      recipients = filterValidUsers(
+        allUsers.filter((u) => emailSet.has(u.email.toLowerCase()))
       );
 
-      finalUsersList = allUsers.filter(
-        (user) =>
-          emails.includes(user.email) && user.email && user.email.includes("@")
-      );
-
-      // If some emails don't have user records, create temporary user objects
-      const existingEmails = new Set(finalUsersList.map((user) => user.email));
-      const missingEmails = emails.filter(
-        (email: string) => !existingEmails.has(email)
-      );
-
-      missingEmails.forEach((email: string) => {
-        finalUsersList.push({
-          id: `temp_${Date.now()}_${Math.random()}`,
-          email,
-          displayName: email.split("@")[0],
-          provider: "unknown",
-          subscriptionType: "unknown",
-          createdAt: new Date().toISOString(),
-          lastLogin: new Date().toISOString(),
-        });
+      // Include emails not matched to a user (external addresses)
+      const matchedEmails = new Set(recipients.map((u) => u.email.toLowerCase()));
+      emails.forEach((e) => {
+        if (!matchedEmails.has(e.toLowerCase()) && e.includes("@")) {
+          recipients.push({
+            id: `ext_${Date.now()}_${Math.random()}`,
+            email: e,
+            displayName: e.split("@")[0],
+            provider: "external",
+            createdAt: "",
+            lastLogin: "",
+          });
+        }
       });
     }
 
-    // Limit to remaining quota
-    finalUsersList = finalUsersList.slice(0, remainingQuota);
+    recipients = recipients.slice(0, remainingQuota);
 
-    if (finalUsersList.length === 0) {
+    if (recipients.length === 0) {
       return NextResponse.json(
-        {
-          message:
-            skipDuplicates && sendToAll
-              ? "All users have already received this email today"
-              : "No valid recipients found",
-          remainingQuota,
-          emailsSentToday: dailyStats.emailsSent,
-        },
-        { status: 200 }
+        { message: "No valid recipients found" },
+        { status: 400 }
       );
     }
 
-    console.log(
-      `Sending emails to ${finalUsersList.length} recipients (remaining quota: ${remainingQuota})...`
+    const emailHtml =
+      htmlContent ||
+      `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+        <h2>Hello {{params.displayName}}!</h2>
+        <div>${content!.replace(/\n/g, "<br>")}</div>
+        <p style="font-size:12px;color:#666;margin-top:24px;">
+          This email was sent from ${senderName}
+        </p>
+      </div>`;
+
+    // ── Send ──────────────────────────────────────────────────────────────
+    const results: SendResult[] = await Promise.all(
+      recipients.map(async (user): Promise<SendResult> => {
+        try {
+          const res = await brevo.transactionalEmails.sendTransacEmail({
+            sender: { email: process.env.FROM_EMAIL!, name: senderName },
+            to: [{ email: user.email }],
+            subject: subject.trim(),
+            htmlContent: emailHtml,
+            params: {
+              displayName: user.displayName || user.email.split("@")[0],
+              appName: senderName,
+            },
+          });
+          return {
+            email: user.email,
+            messageId: (res as { messageId?: string }).messageId,
+            success: true,
+          };
+        } catch (err) {
+          return {
+            email: user.email,
+            error: err instanceof Error ? err.message : "Send failed",
+            success: false,
+          };
+        }
+      })
     );
 
-    // Prepare email content
-    const emailContent =
-      htmlContent ||
-      `<div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-      <h2 style="color: #2563eb;">Hello {{params.displayName}}!</h2>
-      <div style="margin: 20px 0;">
-        ${content.replace(/\n/g, "<br>")}
-      </div>
-      <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
-      <p style="font-size: 12px; color: #6b7280;">
-        This email was sent from ${appName}
-      </p>
-    </div>`;
-
-    // Send individual emails
-    const emailPromises = finalUsersList.map(async (user) => {
-      try {
-        const response = await brevoClient.transactionalEmails.sendTransacEmail({
-          sender: {
-            email: process.env.FROM_EMAIL!,
-            name: senderName,
-          },
-          to: [{ email: user.email }],
-          subject: subject,
-          htmlContent: emailContent,
-          tags: [sendToAll ? "bulk-email" : "selected-users"],
-          params: {
-            displayName: user.displayName || user.email.split("@")[0],
-            appName: appName,
-          },
-        });
-
-        // Track successful email in Firestore
-        const trackingRecord: EmailTrackingRecord = {
-          userId: user.id,
-          email: user.email,
-          subject: subject,
-          sentAt: new Date(),
-          messageId: response.messageId,
-          ...(campaignId && { campaignId }),
-        };
-
-        await db.collection("emailTracking").add(trackingRecord);
-
-        return {
-          email: user.email,
-          messageId: response.messageId,
-          success: true,
-        };
-      } catch (emailError: any) {
-        console.error(
-          `Failed to send email to ${user.email}:`,
-          emailError.message
-        );
-        return {
-          email: user.email,
-          error: emailError.message,
-          success: false,
-        };
-      }
-    });
-
-    // Wait for all emails to be sent
-    const results = await Promise.all(emailPromises);
     const successCount = results.filter((r) => r.success).length;
     const failedCount = results.filter((r) => !r.success).length;
 
-    // Update daily stats
-    const newEmailsSent = dailyStats.emailsSent + successCount;
-    await db.collection("emailStats").doc(today).set({
-      date: today,
-      emailsSent: newEmailsSent,
-      lastUpdated: new Date(),
-    });
-
-    console.log(
-      `Successfully sent ${successCount} emails, ${failedCount} failed`
+    // ── Update daily stats ────────────────────────────────────────────────
+    await db.collection("emailStats").doc(today).set(
+      {
+        date: today,
+        emailsSent: FieldValue.increment(successCount),
+        lastUpdated: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
     );
-    console.log(`Total emails sent today: ${newEmailsSent}/${maxEmailsPerDay}`);
 
     return NextResponse.json({
-      message: `Emails processed: ${successCount} sent successfully, ${failedCount} failed`,
+      message: `${successCount} sent successfully, ${failedCount} failed`,
       totalProcessed: results.length,
       successCount,
       failedCount,
-      remainingQuota: maxEmailsPerDay - newEmailsSent,
-      emailsSentToday: newEmailsSent,
+      remainingQuota: remainingQuota - successCount,
+      emailsSentToday: emailsSentToday + successCount,
       results,
     });
-  } catch (error: any) {
-    console.error("Error Details:", {
-      message: error.message,
-      response: error.response?.body,
-      stack: error.stack,
-    });
-
-    // Handle specific Brevo errors
+  } catch (err) {
+    const error = err as { message?: string; response?: { status?: number } };
     if (error.response?.status === 401) {
-      return NextResponse.json(
-        { message: "Invalid Brevo API key" },
-        { status: 401 }
-      );
+      return NextResponse.json({ message: "Invalid Brevo API key" }, { status: 401 });
     }
-
     if (error.response?.status === 403) {
       return NextResponse.json(
         { message: "Brevo account suspended or sender not verified" },
         { status: 403 }
       );
     }
-
-    if (error.response?.status === 400) {
-      return NextResponse.json(
-        { message: "Invalid email data or malformed request" },
-        { status: 400 }
-      );
-    }
-
     return NextResponse.json(
-      {
-        message: "Failed to send emails",
-        error: error.message || "Unknown error",
-      },
+      { message: "Failed to send emails", error: error.message ?? "Unknown error" },
       { status: 500 }
     );
   }
 }
 
-// GET endpoint to check email stats
-export async function GET(request: NextRequest) {
+// GET /api/send-email — daily quota summary
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(request.url);
     const date =
-      searchParams.get("date") || new Date().toISOString().split("T")[0];
+      searchParams.get("date") ?? new Date().toISOString().split("T")[0];
 
-    const dailyStatsDoc = await db.collection("emailStats").doc(date).get();
-    const dailyStats = dailyStatsDoc.exists
-      ? (dailyStatsDoc.data() as DailyEmailStats)
-      : { date, emailsSent: 0, lastUpdated: new Date() };
-
-    // Get recent email tracking records for the date
-    const trackingSnapshot = await db
-      .collection("emailTracking")
-      .where("sentAt", ">=", new Date(`${date}T00:00:00Z`))
-      .where("sentAt", "<", new Date(`${date}T23:59:59Z`))
-      .orderBy("sentAt", "desc")
-      .limit(50)
-      .get();
-
-    const recentEmails = trackingSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-      sentAt: doc.data().sentAt.toDate().toISOString(),
-    }));
+    const doc = await db.collection("emailStats").doc(date).get();
+    const emailsSent = doc.exists
+      ? (doc.data() as DailyEmailStatsDoc).emailsSent ?? 0
+      : 0;
 
     return NextResponse.json({
       date,
-      emailsSent: dailyStats.emailsSent,
-      remainingQuota: emailLimit - (dailyStats.emailsSent || 0),
-      recentEmails,
-      lastUpdated: dailyStats.lastUpdated,
+      emailsSent,
+      remainingQuota: Math.max(0, DAILY_EMAIL_LIMIT - emailsSent),
+      dailyLimit: DAILY_EMAIL_LIMIT,
     });
-  } catch (error: any) {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
-      { message: "Failed to fetch email stats", error: error.message },
+      { message: "Failed to fetch email stats", error: message },
       { status: 500 }
     );
   }

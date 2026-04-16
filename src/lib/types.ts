@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+// ─── User (locked — identical across all apps) ────────────────────────────
 export interface User {
   id: string;
   displayName: string;
@@ -10,6 +12,7 @@ export interface User {
   subscriptionType?: string;
 }
 
+// ─── User Stats & Pagination ───────────────────────────────────────────────
 export interface UserStats {
   totalUsers: number;
   subscribedUsers: number;
@@ -17,77 +20,64 @@ export interface UserStats {
   newThisWeek: number;
 }
 
-export interface PaginationInfo {
+export interface Pagination {
   currentPage: number;
   totalPages: number;
   totalUsers: number;
   usersPerPage: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
 }
 
-export interface EmailTrackingRecord {
-  userId: string;
-  email: string;
-  subject: string;
-  sentAt: Date;
-  messageId?: string;
-  campaignId?: string; // Optional: to group related emails
-}
+// ─── Campaign ──────────────────────────────────────────────────────────────
+// A CampaignVersion is the unit of work: one app version + one category.
+// The (appVersion, category) pair is unique — enforced by the API.
+// EmailLog is the source of truth for who received this campaign's email.
 
-export interface DailyEmailStats {
-  date: string; // YYYY-MM-DD format
-  emailsSent: number;
-  lastUpdated: Date;
-}
+export type CampaignCategory = "app_update" | "promotion" | "general" | "newsletter";
+export type CampaignStatus = "draft" | "active" | "paused" | "completed";
 
-export interface BulkEmailRequest {
+export interface CampaignVersion {
+  id: string;
+  appVersion: string;          // e.g. "2.0.0"
+  category: CampaignCategory;
   subject: string;
   htmlContent: string;
-  campaignId?: string; // Optional: to group related emails
-  maxEmailsPerDay?: number; // Default: 80
-  skipDuplicates?: boolean; // Default: true
-}
-
-export interface EmailSendResult {
-  email: string;
-  messageId?: string;
-  error?: string;
-  success: boolean;
-}
-
-export interface BulkEmailResponse {
-  message: string;
-  totalProcessed: number;
-  successCount: number;
+  fromName: string;
+  status: CampaignStatus;
+  totalUsers: number;          // set on first run; 0 = never run
+  sentCount: number;
   failedCount: number;
-  remainingQuota: number;
-  emailsSentToday: number;
-  results: EmailSendResult[];
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
-export interface EmailStatsResponse {
-  date: string;
-  emailsSent: number;
-  remainingQuota: number;
-  recentEmails: (EmailTrackingRecord & { id: string; sentAt: string })[];
-  lastUpdated: Date;
-}
+// ─── Email Log (resume source of truth) ───────────────────────────────────
+// One record per user per campaign version.
+// Query emailLogs where campaignVersionId == id to find already-sent users.
 
-// Firestore document data (without Timestamp conversion)
-export interface EmailTrackingRecordDoc {
+export type EmailLogStatus = "sent" | "failed";
+
+export interface EmailLog {
+  id: string;
+  campaignVersionId: string;
   userId: string;
   email: string;
-  subject: string;
-  sentAt: any; // Firestore Timestamp
+  status: EmailLogStatus;
   messageId?: string;
-  campaignId?: string;
+  error?: string;
+  sentAt: string;
 }
 
-export interface DailyEmailStatsDoc {
-  date: string;
+// ─── Daily Email Stats (global Brevo 300/day quota) ───────────────────────
+export interface DailyEmailStats {
+  date: string;          // YYYY-MM-DD
   emailsSent: number;
-  lastUpdated: any; // Firestore Timestamp
+  lastUpdated: string;
 }
 
+// ─── Firebase Config ──────────────────────────────────────────────────────
 export interface FirebaseConfig {
   type: string;
   project_id: string;
@@ -100,13 +90,4 @@ export interface FirebaseConfig {
   auth_provider_x509_cert_url: string;
   client_x509_cert_url: string;
   universe_domain?: string;
-}
-
-export interface Pagination {
-  currentPage: number;
-  totalPages: number;
-  totalUsers: number;
-  usersPerPage: number;
-  hasNextPage: boolean;
-  hasPrevPage: boolean;
 }

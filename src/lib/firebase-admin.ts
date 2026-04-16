@@ -73,21 +73,22 @@ const getDefaultServiceAccount = () => {
 // Initialize with environment variables if available
 const initializeDefault = () => {
   if (admin.apps.length === 0) {
+    const defaultServiceAccount = getDefaultServiceAccount();
+    if (!defaultServiceAccount) return;
     try {
-      const defaultServiceAccount = getDefaultServiceAccount();
-      if (defaultServiceAccount) {
-        admin.initializeApp({
-          credential: admin.credential.cert(defaultServiceAccount as any),
+      admin.initializeApp({
+        credential: admin.credential.cert({
           projectId: defaultServiceAccount.project_id,
-        });
-        firestoreDb = getFirestore();
-        console.log("Firebase initialized with environment variables");
-      }
-    } catch (error) {
-      console.log(
-        "Could not initialize Firebase with environment variables:",
-        error
-      );
+          clientEmail: defaultServiceAccount.client_email,
+          privateKey: defaultServiceAccount.private_key,
+        }),
+        projectId: defaultServiceAccount.project_id,
+      });
+      firestoreDb = getFirestore();
+      console.log("Firebase initialized with environment variables");
+    } catch {
+      // Env vars present but invalid (e.g. malformed private key) — ignore,
+      // the user will upload a service account JSON via the dashboard.
     }
   }
 };
